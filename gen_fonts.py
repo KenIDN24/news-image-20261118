@@ -27,22 +27,27 @@ HERE = Path(__file__).resolve().parent
 
 # (output name, ttf file, pixel size)
 FONTS = [
-    ("bold54", "LiberationSans-Bold.ttf", 54),     # masthead
-    ("bold40", "LiberationSans-Bold.ttf", 40),     # date line
-    ("bold46", "LiberationSans-Bold.ttf", 46),     # lead headline
-    ("reg23", "LiberationSans-Regular.ttf", 23),   # lead deck
-    ("bold27", "LiberationSans-Bold.ttf", 27),     # panel headlines
-    ("reg19", "LiberationSans-Regular.ttf", 19),   # panel decks
-    ("bold20", "LiberationSans-Bold.ttf", 20),     # section headers
-    ("reg18", "LiberationSans-Regular.ttf", 18),   # briefs
-    ("bold17", "LiberationSans-Bold.ttf", 17),     # kickers
-    ("reg16", "LiberationSans-Regular.ttf", 16),   # footer
+    ("bold68", "LiberationSans-Bold.ttf", 68),     # date headline (if it fits)
+    ("bold60", "LiberationSans-Bold.ttf", 60),     # date headline (fallback)
+    ("bold28", "LiberationSans-Bold.ttf", 28),     # top-panel headlines (spare)
+    ("bold24", "LiberationSans-Bold.ttf", 24),     # top-panel headlines
+    ("reg14", "LiberationSans-Regular.ttf", 14),   # top-panel decks
+    ("bold20", "LiberationSans-Bold.ttf", 20),     # masthead strip, left
+    ("bold17", "LiberationSans-Bold.ttf", 17),     # grid headlines
+    ("bold14", "LiberationSans-Bold.ttf", 14),     # section headers, strip right
+    ("bold12", "LiberationSans-Bold.ttf", 12),     # panel kickers, brief numbers
+    ("bold11", "LiberationSans-Bold.ttf", 11),     # grid kickers
+    ("bold10", "LiberationSans-Bold.ttf", 10),     # map pin numbers, badges
+    ("reg12", "LiberationSans-Regular.ttf", 12),   # map labels
+    ("reg11", "LiberationSans-Regular.ttf", 11),   # grid decks, briefs, footer
+    ("reg10", "LiberationSans-Regular.ttf", 10),   # map legend
 ]
 
 # Printable ASCII plus the punctuation the page actually uses.
 CODEPOINTS = list(range(32, 127)) + [
     0x00A3,  # pound sign
     0x00B7,  # middle dot
+    0x00E1,  # a with acute (Awa)
     0x2013,  # en dash
     0x2014,  # em dash
     0x2018, 0x2019,  # single quotes
