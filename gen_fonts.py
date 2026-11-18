@@ -1,127 +1,82 @@
 #!/usr/bin/env python3
-"""Build-time tool: rasterise Liberation Sans glyphs into fonts.bin.
+"""Build-time font rasteriser (Pillow allowed here, and ONLY here).
 
-The grading sandbox for this contest runs a stock python:3.13-slim image
-(standard library only), so main.py cannot use Pillow at runtime. Instead,
-this script runs once at build time on a machine that has Pillow and bakes
-the glyph coverage maps main.py needs into a compact binary blob:
-
-  fonts.bin = zlib-compressed stream of
-    magic "MFNT1", u16 font count
-    per font:  u8 name length, name, i16 ascent, i16 descent, u16 glyph count
-    per glyph: u32 codepoint, u16 advance (1/64 px), i16 left, i16 top,
-               u16 width, u16 height, u32 data length, data bytes
-               (4-bit coverage, row-major, high nibble first)
-
-main.py loads it with nothing but the standard library and blits the glyphs.
-Re-run this script only if the type sizes or character set change.
+Reads the Liberation Sans TTFs in fonts/ and packs every glyph we need
+into fonts.bin: per glyph an advance, a bounding box and 4-bit coverage,
+zlib-compressed behind a tiny magic header.  main.py re-implements the
+reader with the standard library alone.
 """
-
+import os
 import struct
 import zlib
-from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageFont
 
-HERE = Path(__file__).resolve().parent
+HERE = os.path.dirname(os.path.abspath(__file__))
 
-# (output name, ttf file, pixel size)
+# Printable ASCII plus the handful of extra characters the page uses.
+EXTRA = "£·á–—‘’“”…×"
+CHARSET = "".join(chr(c) for c in range(32, 127)) + EXTRA
+
+# (name, ttf file, pixel size) -- main.py hard-codes the same order.
 FONTS = [
-    ("bold68", "LiberationSans-Bold.ttf", 68),     # date headline (if it fits)
-    ("bold60", "LiberationSans-Bold.ttf", 60),     # date headline (fallback)
-    ("bold28", "LiberationSans-Bold.ttf", 28),     # top-panel headlines (spare)
-    ("bold24", "LiberationSans-Bold.ttf", 24),     # top-panel headlines
-    ("reg14", "LiberationSans-Regular.ttf", 14),   # top-panel decks
-    ("bold20", "LiberationSans-Bold.ttf", 20),     # masthead strip, left
-    ("bold17", "LiberationSans-Bold.ttf", 17),     # grid headlines
-    ("bold14", "LiberationSans-Bold.ttf", 14),     # section headers, strip right
-    ("bold12", "LiberationSans-Bold.ttf", 12),     # panel kickers, brief numbers
-    ("bold11", "LiberationSans-Bold.ttf", 11),     # grid kickers
-    ("bold10", "LiberationSans-Bold.ttf", 10),     # map pin numbers, badges
-    ("reg12", "LiberationSans-Regular.ttf", 12),   # map labels
-    ("reg11", "LiberationSans-Regular.ttf", 11),   # grid decks, briefs, footer
-    ("reg10", "LiberationSans-Regular.ttf", 10),   # map legend
+    ("bold60", "LiberationSans-Bold.ttf", 60),
+    ("bold24", "LiberationSans-Bold.ttf", 24),
+    ("bold20", "LiberationSans-Bold.ttf", 20),
+    ("bold17", "LiberationSans-Bold.ttf", 17),
+    ("bold14", "LiberationSans-Bold.ttf", 14),
+    ("bold12", "LiberationSans-Bold.ttf", 12),
+    ("bold11", "LiberationSans-Bold.ttf", 11),
+    ("bold10", "LiberationSans-Bold.ttf", 10),
+    ("reg14", "LiberationSans-Regular.ttf", 14),
+    ("reg11", "LiberationSans-Regular.ttf", 11),
+    ("reg10", "LiberationSans-Regular.ttf", 10),
 ]
 
-# Printable ASCII plus the punctuation the page actually uses.
-CODEPOINTS = list(range(32, 127)) + [
-    0x00A3,  # pound sign
-    0x00B7,  # middle dot
-    0x00E1,  # a with acute (Awa)
-    0x2013,  # en dash
-    0x2014,  # em dash
-    0x2018, 0x2019,  # single quotes
-    0x201C, 0x201D,  # double quotes
-    0x2026,  # ellipsis
-]
+MAGIC = b"FNT1"
 
 
-def rasterise(font: ImageFont.FreeTypeFont, ch: str):
-    """Return (advance, left, top, width, height, coverage bytes 0..255).
-
-    The glyph is drawn once with a left-baseline anchor on a scratch image;
-    left/top locate the cropped coverage box relative to the pen point and
-    the baseline, so main.py can place glyphs exactly.
-    """
-    size = font.size
-    pad = size
-    baseline = size * 2
-    img = Image.new("L", (size * 4, size * 4), 0)
-    draw = ImageDraw.Draw(img)
-    draw.text((pad, baseline), ch, font=font, fill=255, anchor="ls")
-    advance = font.getlength(ch)
-    bbox = img.getbbox()
-    if bbox is None:  # space and other blank glyphs
-        return advance, 0, 0, 0, 0, b""
-    crop = img.crop(bbox)
-    left = bbox[0] - pad
-    top = bbox[1] - baseline
-    return advance, left, top, crop.width, crop.height, crop.tobytes()
-
-
-def pack_coverage(raw: bytes) -> bytes:
-    """Quantise 8-bit coverage to 4-bit, two pixels per byte."""
-    out = bytearray((len(raw) + 1) // 2)
-    for i, value in enumerate(raw):
-        nibble = value >> 4
-        if i % 2 == 0:
-            out[i // 2] |= nibble << 4
-        else:
-            out[i // 2] |= nibble
+def pack_font(ttf_path, size):
+    font = ImageFont.truetype(ttf_path, size)
+    out = bytearray()
+    out += struct.pack("<H", len(CHARSET))
+    for ch in CHARSET:
+        bbox = font.getbbox(ch)  # (x0, y0, x1, y1) vs. ascender-top anchor
+        advance = int(round(font.getlength(ch)))
+        if bbox is None:
+            out += struct.pack("<BhhBB", advance, 0, 0, 0, 0)
+            continue
+        x0, y0, x1, y1 = bbox
+        w = max(0, x1 - x0)
+        h = max(0, y1 - y0)
+        out += struct.pack("<BhhBB", advance, x0, y0, w, h)
+        if w and h:
+            mask = font.getmask(ch)
+            px = list(mask)
+            mw, mh = mask.size
+            vals = []
+            for yy in range(h):
+                for xx in range(w):
+                    if xx < mw and yy < mh:
+                        vals.append(px[yy * mw + xx] >> 4)
+                    else:
+                        vals.append(0)
+            for i in range(0, len(vals), 2):
+                hi = vals[i]
+                lo = vals[i + 1] if i + 1 < len(vals) else 0
+                out.append((hi << 4) | lo)
     return bytes(out)
 
 
-def main() -> None:
-    chunks = [b"MFNT1", struct.pack("<H", len(FONTS))]
-    for name, ttf, size in FONTS:
-        font = ImageFont.truetype(str(HERE / "fonts" / ttf), size)
-        ascent, descent = font.getmetrics()
-        glyphs = []
-        for cp in CODEPOINTS:
-            ch = chr(cp)
-            advance, left, top, w, h, raw = rasterise(font, ch)
-            data = pack_coverage(raw)
-            glyphs.append(
-                struct.pack(
-                    "<I H h h H H I",
-                    cp,
-                    round(advance * 64),
-                    left,
-                    top,
-                    w,
-                    h,
-                    len(data),
-                )
-                + data
-            )
-        chunks.append(struct.pack("<B", len(name)))
-        chunks.append(name.encode("ascii"))
-        chunks.append(struct.pack("<h h H", ascent, descent, len(glyphs)))
-        chunks.extend(glyphs)
-        print(f"{name}: {len(glyphs)} glyphs, ascent {ascent}, descent {descent}")
-    blob = zlib.compress(b"".join(chunks), 9)
-    (HERE / "fonts.bin").write_bytes(blob)
-    print(f"fonts.bin: {len(blob)} bytes")
+def main():
+    blob = bytearray()
+    blob += struct.pack("<B", len(FONTS))
+    for _name, ttf, size in FONTS:
+        blob += pack_font(os.path.join(HERE, "fonts", ttf), size)
+    payload = MAGIC + zlib.compress(bytes(blob), 9)
+    with open(os.path.join(HERE, "fonts.bin"), "wb") as fh:
+        fh.write(payload)
+    print("fonts.bin:", len(payload), "bytes")
 
 
 if __name__ == "__main__":
